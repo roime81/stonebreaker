@@ -1,58 +1,199 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Stonebreaker console</title>
-<style>
-body{font-family:system-ui,sans-serif;margin:1.5rem;max-width:1000px}
-fieldset{margin-bottom:1rem} table{border-collapse:collapse;margin-top:.5rem}
-td,th{border:1px solid #ccc;padding:2px 8px;text-align:left} .err{color:#b00020} .ok{color:#116611}
-</style></head><body>
-<h1>Stonebreaker console</h1>
-<p>Development MVP. PostgreSQL is the source of truth; analytics are a DuckDB <b>snapshot</b> (not real-time).</p>
-<fieldset><legend>API key (X-API-Key)</legend>
-<input id="key" type="password" size="30" autocomplete="off"> <button id="savekey">Use key</button></fieldset>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Stonebreaker · Data platform</title>
+  <style>
+    :root{font:16px/1.5 system-ui,sans-serif;color:#14202b;background:#f4f7fa}
+    *{box-sizing:border-box}body{margin:0}header,main{max-width:1100px;margin:auto;padding:1rem}
+    header{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+    h1{font-size:1.55rem;margin:0}h2{font-size:1.2rem}nav{display:flex;gap:.5rem;flex-wrap:wrap}
+    nav a,button{background:#124a68;color:white;border:0;border-radius:.35rem;padding:.55rem .8rem;text-decoration:none;cursor:pointer}
+    button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #e29b00;outline-offset:2px}
+    section,.panel{background:white;border:1px solid #d5dee6;border-radius:.5rem;padding:1rem;margin:1rem 0}
+    label{display:block;font-weight:600;margin:.5rem 0}input,select,textarea{font:inherit;max-width:100%;padding:.4rem;border:1px solid #8a9baa;border-radius:.25rem}
+    textarea{width:100%;min-height:8rem;font-family:ui-monospace,monospace}
+    .row{display:flex;gap:.75rem;align-items:end;flex-wrap:wrap}.muted{color:#4b5c6b}.error{color:#9e1d1d}.ok{color:#17643b}
+    table{border-collapse:collapse;width:100%;margin-top:.75rem;display:block;overflow-x:auto}
+    th,td{border:1px solid #cbd5df;padding:.4rem .6rem;text-align:left;white-space:nowrap}th{background:#eaf0f5}
+    .chart{display:flex;align-items:center;gap:.5rem;margin:.5rem 0}.bar{height:1.25rem;background:#3a87a8;min-width:2px}
+    @media(max-width:600px){header{align-items:flex-start}main{padding:.5rem}section{padding:.75rem}}
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>Stonebreaker</h1><p class="muted">PostgreSQL transactions · DuckDB snapshot analytics</p></div>
+    <nav aria-label="Page sections">
+      <a href="#dashboard">Dashboard</a><a href="#data">Data browser</a><a href="#reports">Reports</a><a href="#transforms">Transform review</a>
+    </nav>
+  </header>
+  <main>
+    <section aria-labelledby="session-title">
+      <h2 id="session-title">Service session</h2>
+      <p class="muted">This development console uses a service-account API key. Do not expose it to untrusted users.</p>
+      <label for="key">API key</label>
+      <div class="row"><input id="key" type="password" autocomplete="off" aria-describedby="key-help">
+        <button id="savekey" type="button">Connect</button></div>
+      <p id="key-help" class="muted">The key is held in this browser tab's session storage.</p>
+      <p id="connection" role="status" aria-live="polite"></p>
+    </section>
 
-<fieldset><legend>1. Transaction: place order</legend>
-customer id <input id="cid" type="number" value="1" min="1" style="width:5em">
-product id <input id="pid" type="number" value="1" min="1" style="width:5em">
-quantity <input id="qty" type="number" value="1" min="1" max="1000" style="width:5em">
-<button id="order">Place order</button> <button id="loadorders">Recent orders</button>
-<div id="orderout"></div></fieldset>
+    <section id="dashboard" aria-labelledby="dashboard-title">
+      <h2 id="dashboard-title">Dashboard</h2>
+      <div class="row"><button id="health" type="button">Check service health</button><button id="status" type="button">Refresh status</button>
+        <button id="refresh" type="button">Refresh analytics snapshot</button></div>
+      <p id="healthout" role="status" aria-live="polite"></p><p id="statusout" role="status" aria-live="polite"></p>
+    </section>
 
-<fieldset><legend>2. Refresh analytics snapshot</legend>
-<button id="refresh">Refresh now</button> <button id="status">Status</button>
-<div id="statusout"></div></fieldset>
+    <section id="data" aria-labelledby="data-title">
+      <h2 id="data-title">Order browser</h2>
+      <p class="muted">Pages use an order-ID cursor rather than OFFSET.</p>
+      <form id="orderform">
+        <div class="row">
+          <label for="customer">Customer ID <input id="customer" type="number" value="1" min="1" required></label>
+          <label for="product">Product ID <input id="product" type="number" value="1" min="1" required></label>
+          <label for="quantity">Quantity <input id="quantity" type="number" value="1" min="1" max="1000" required></label>
+          <button type="submit">Place order</button>
+        </div>
+      </form>
+      <p id="orderresult" role="status" aria-live="polite"></p>
+      <button id="loadorders" type="button">Load first page</button>
+      <button id="nextorders" type="button" disabled>Next page</button>
+      <div id="orderout" aria-live="polite"></div>
+    </section>
 
-<fieldset><legend>3. Analytical report (from DuckDB snapshot)</legend>
-<select id="report"></select> limit <input id="limit" type="number" value="10" min="1" max="100" style="width:5em">
-<button id="run">Run</button><div id="reportout"></div></fieldset>
-<script>
-const $=id=>document.getElementById(id);
-$('key').value=sessionStorage.getItem('sbkey')||'';
-$('savekey').onclick=()=>{sessionStorage.setItem('sbkey',$('key').value);loadReports();};
-async function api(path,opts={}){
-  const r=await fetch(path,{...opts,headers:{'X-API-Key':$('key').value,'Content-Type':'application/json'}});
-  const body=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||r.status));
-  return body;
-}
-function table(rows){
-  const t=document.createElement('table');if(!rows.length){t.textContent='(no rows)';return t;}
-  const cols=Object.keys(rows[0]);const h=t.insertRow();
-  cols.forEach(c=>{const th=document.createElement('th');th.textContent=c;h.appendChild(th);});
-  rows.forEach(r=>{const tr=t.insertRow();cols.forEach(c=>{tr.insertCell().textContent=r[c]===null?'':r[c];});});
-  return t;
-}
-function show(id,node,isErr){const o=$(id);o.replaceChildren();
-  if(typeof node==='string'){const p=document.createElement('p');p.textContent=node;p.className=isErr?'err':'ok';o.appendChild(p);}else o.appendChild(node);}
-const guard=(id,fn)=>async()=>{try{await fn();}catch(e){show(id,'Error: '+e.message,true);}};
-$('order').onclick=guard('orderout',async()=>{
-  const o=await api('/api/orders',{method:'POST',body:JSON.stringify({customer_id:+$('cid').value,product_id:+$('pid').value,quantity:+$('qty').value})});
-  show('orderout',table([o]));});
-$('loadorders').onclick=guard('orderout',async()=>show('orderout',table(await api('/api/orders?limit=10'))));
-function renderStatus(s){const l=s.last_run;
-  show('statusout',l?`Last run #${l.run_id}: ${l.status}${l.error?' — '+l.error:''} (finished ${l.finished_at}); last success: ${s.last_success_at||'never'}; mode: ${s.mode}`:'No refresh yet. Mode: '+s.mode,!!(l&&l.status==='failed'));}
-$('refresh').onclick=guard('statusout',async()=>renderStatus(await api('/api/analytics/refresh',{method:'POST'})));
-$('status').onclick=guard('statusout',async()=>renderStatus(await api('/api/analytics/status')));
-$('run').onclick=guard('reportout',async()=>show('reportout',table(await api(`/api/analytics/reports/${encodeURIComponent($('report').value)}?limit=${+$('limit').value}`))));
-async function loadReports(){try{const names=await api('/api/analytics/reports');$('report').replaceChildren(...names.map(n=>{const o=document.createElement('option');o.value=o.textContent=n;return o;}));}catch(e){}}
-loadReports();
-</script></body></html>
+    <section id="reports" aria-labelledby="reports-title">
+      <h2 id="reports-title">Analytical reports</h2>
+      <div class="row"><label for="report">Report</label><select id="report"></select>
+        <label for="limit">Rows</label><input id="limit" type="number" value="10" min="1" max="100" style="width:6rem">
+        <button id="run" type="button">Run report</button></div>
+      <p id="reportstate" role="status" aria-live="polite"></p><div id="reportout"></div>
+    </section>
+
+    <section id="transforms" aria-labelledby="transform-title">
+      <h2 id="transform-title">Transformation proposal review</h2>
+      <p class="muted">Paste a small JSON array of records. Only profile metadata is sent to the configured provider; cell values are not included. No SQL or code is accepted.</p>
+      <label for="sample">Sample records (JSON)</label>
+      <textarea id="sample" spellcheck="false">[{"name":" Ada ","age":37},{"name":"Lin","age":42}]</textarea>
+      <div class="row"><button id="propose" type="button">Profile and propose</button><button id="approve" type="button" disabled>Approve validated plan</button></div>
+      <p id="proposalstate" role="status" aria-live="polite"></p><pre id="proposalout"></pre>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    $('key').value = sessionStorage.getItem('sbkey') || '';
+    let orderCursor = 0, pendingProposal = null;
+    async function api(path, options = {}) {
+      const response = await fetch(path, {...options, headers: {
+        'X-API-Key': $('key').value,
+        ...(options.body ? {'Content-Type': 'application/json'} : {}),
+        ...(options.headers || {})
+      }});
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `Request failed (${response.status})`);
+      return body;
+    }
+    function showText(id, text, error = false) {
+      const target = $(id); target.textContent = text; target.className = error ? 'error' : 'ok';
+    }
+    function table(rows) {
+      const element = document.createElement('table');
+      if (!rows.length) { element.textContent = 'No rows.'; return element; }
+      const header = element.createTHead().insertRow();
+      Object.keys(rows[0]).forEach(key => { const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = key; header.appendChild(cell); });
+      const body = element.createTBody();
+      rows.forEach(row => { const tr = body.insertRow(); Object.keys(rows[0]).forEach(key => { tr.insertCell().textContent = row[key] == null ? '' : row[key]; }); });
+      return element;
+    }
+    function guard(id, callback) {
+      return async () => { const output = $(id); output.setAttribute('aria-busy', 'true');
+        try { await callback(); } catch (error) { showText(id, `Error: ${error.message}`, true); }
+        finally { output.setAttribute('aria-busy', 'false'); }
+      };
+    }
+    $('savekey').onclick = async () => {
+      sessionStorage.setItem('sbkey', $('key').value);
+      try { await loadReports(); showText('connection', 'Connected.'); }
+      catch (error) { showText('connection', `Error: ${error.message}`, true); }
+    };
+    $('health').onclick = guard('healthout', async () => {
+      const results = await Promise.all(['healthz', 'readyz'].map(async path => {
+        const response = await fetch(`/${path}`); return `${path}: ${response.ok ? 'ready' : 'unavailable'}`;
+      }));
+      showText('healthout', results.join(' · '), results.some(value => value.endsWith('unavailable')));
+    });
+    $('status').onclick = guard('statusout', async () => {
+      const state = await api('/api/analytics/status');
+      const run = state.last_run;
+      showText('statusout', run ? `Last snapshot: ${run.status}; ${run.rows_orders ?? 0} orders; mode: ${state.mode}` : `No snapshot yet; mode: ${state.mode}`, !!run && run.status === 'failed');
+    });
+    $('refresh').onclick = guard('statusout', async () => {
+      const state = await api('/api/analytics/refresh', {method: 'POST'});
+      const run = state.last_run;
+      showText('statusout', run ? `Last snapshot: ${run.status}; ${run.rows_orders ?? 0} orders; mode: ${state.mode}` : 'Refresh finished.');
+    });
+    async function loadOrders(cursor = 0) {
+      const page = await api(`/api/orders/page?after_id=${cursor}&limit=50`);
+      $('orderout').replaceChildren(table(page.items));
+      orderCursor = page.next_cursor ?? 0;
+      $('nextorders').disabled = page.next_cursor === null;
+    }
+    $('loadorders').onclick = guard('orderout', () => loadOrders());
+    $('nextorders').onclick = guard('orderout', () => loadOrders(orderCursor));
+    $('orderform').onsubmit = async event => {
+      event.preventDefault();
+      $('orderresult').setAttribute('aria-busy', 'true');
+      try {
+        const order = await api('/api/orders', {method: 'POST', body: JSON.stringify({
+          customer_id: Number($('customer').value),
+          product_id: Number($('product').value),
+          quantity: Number($('quantity').value)
+        })});
+        showText('orderresult', `Order ${order.id} created.`);
+      } catch (error) {
+        showText('orderresult', `Error: ${error.message}`, true);
+      } finally {
+        $('orderresult').setAttribute('aria-busy', 'false');
+      }
+    };
+    function renderChart(rows) {
+      const out = $('reportout'); out.replaceChildren(table(rows));
+      if (!rows.length || !Object.hasOwn(rows[0], 'revenue_cents')) return;
+      const max = Math.max(...rows.map(row => Number(row.revenue_cents) || 0), 1);
+      rows.forEach(row => {
+        const line = document.createElement('div'); line.className = 'chart';
+        const label = document.createElement('span'); label.textContent = String(row.label ?? row.category ?? row.region ?? row.day ?? 'result');
+        const bar = document.createElement('div'); bar.className = 'bar'; bar.style.width = `${Math.max(2, 100 * row.revenue_cents / max)}%`;
+        bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', `${label.textContent}: ${row.revenue_cents} cents`);
+        line.append(label, bar); out.appendChild(line);
+      });
+    }
+    $('run').onclick = guard('reportstate', async () => {
+      const rows = await api(`/api/analytics/reports/${encodeURIComponent($('report').value)}?limit=${Number($('limit').value)}`);
+      renderChart(rows); showText('reportstate', `${rows.length} rows returned.`);
+    });
+    async function loadReports() {
+      const names = await api('/api/analytics/reports');
+      $('report').replaceChildren(...names.map(name => { const option = document.createElement('option'); option.value = name; option.textContent = name; return option; }));
+    }
+    $('propose').onclick = guard('proposalstate', async () => {
+      const rows = JSON.parse($('sample').value);
+      const result = await api('/api/ingestion/proposals', {method: 'POST', body: JSON.stringify({rows})});
+      pendingProposal = {columns: result.profile.columns.map(column => column.name), plan: result.plan};
+      $('proposalout').textContent = JSON.stringify(result, null, 2);
+      $('approve').disabled = false;
+      showText('proposalstate', 'Proposal is unapproved. Review it before proceeding.');
+    });
+    $('approve').onclick = guard('proposalstate', async () => {
+      if (!pendingProposal) throw new Error('No proposal to approve.');
+      const result = await api('/api/ingestion/proposals/approve', {method: 'POST', body: JSON.stringify(pendingProposal)});
+      $('proposalout').textContent = JSON.stringify(result, null, 2);
+      $('approve').disabled = true;
+      showText('proposalstate', 'Plan validated and approved for this review only; it is not persisted or applied to an ingestion job.');
+    });
+    loadReports().catch(error => showText('connection', `Connect using the service key to load reports: ${error.message}`, true));
+  </script>
+</body>
+</html>

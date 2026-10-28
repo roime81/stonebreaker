@@ -1,0 +1,56 @@
+name: Hugging Face 10M benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Immutable 40-character Hugging Face dataset commit
+        required: true
+        type: string
+      rows:
+        description: Number of rows to stream
+        required: true
+        default: "10000000"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: stonebreaker
+          POSTGRES_PASSWORD: stonebreaker
+          POSTGRES_DB: stonebreaker
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stonebreaker"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      STONEBREAKER_PG_DSN: host=127.0.0.1 port=5432 dbname=stonebreaker user=stonebreaker
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.6.0
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt datasets==3.3.2
+      - name: Run pinned dataset benchmark
+        env:
+          HF_REVISION: ${{ inputs.revision }}
+          HF_ROWS: ${{ inputs.rows }}
+        run: python bench/hf_10m.py --revision "$HF_REVISION" --rows "$HF_ROWS" --approve-offline-plan
+      - name: Preserve raw benchmark output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hf-10m-results
+          path: bench/results/
+          if-no-files-found: error

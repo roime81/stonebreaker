@@ -30,6 +30,14 @@ def test_transaction_write_read_and_stock(client):
     assert after == before - 2
 
 
+def test_order_keyset_pages_have_no_gaps_or_duplicates(client):
+    first = client.get("/api/orders/page?limit=7").json()
+    assert [row["id"] for row in first["items"]] == list(range(1, 8))
+    assert first["next_cursor"] == 7
+    second = client.get(f"/api/orders/page?after_id={first['next_cursor']}&limit=7").json()
+    assert [row["id"] for row in second["items"]] == list(range(8, 15))
+
+
 def test_transaction_errors_leave_state_unchanged(client):
     with psycopg.connect(client.settings.pg_dsn) as c:
         c.execute("UPDATE products SET stock = 5 WHERE id = 1")

@@ -56,6 +56,16 @@ def list_orders(dsn: str, limit: int) -> list[dict]:
         ).fetchall()
 
 
+def page_orders(dsn: str, after_id: int, limit: int) -> list[dict]:
+    """Fetch the next ascending keyset page without scanning skipped rows."""
+    with connect(dsn) as conn:
+        return conn.execute(
+            "SELECT id, customer_id, product_id, quantity, total_cents, created_at "
+            "FROM orders WHERE id > %s ORDER BY id LIMIT %s",
+            (after_id, limit),
+        ).fetchall()
+
+
 def get_order(dsn: str, order_id: int) -> dict | None:
     with connect(dsn) as conn:
         return conn.execute(
