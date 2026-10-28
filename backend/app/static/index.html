@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Stonebreaker console</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:1.5rem;max-width:1000px}
+fieldset{margin-bottom:1rem} table{border-collapse:collapse;margin-top:.5rem}
+td,th{border:1px solid #ccc;padding:2px 8px;text-align:left} .err{color:#b00020} .ok{color:#116611}
+</style></head><body>
+<h1>Stonebreaker console</h1>
+<p>Development MVP. PostgreSQL is the source of truth; analytics are a DuckDB <b>snapshot</b> (not real-time).</p>
+<fieldset><legend>API key (X-API-Key)</legend>
+<input id="key" type="password" size="30" autocomplete="off"> <button id="savekey">Use key</button></fieldset>
+
+<fieldset><legend>1. Transaction: place order</legend>
+customer id <input id="cid" type="number" value="1" min="1" style="width:5em">
+product id <input id="pid" type="number" value="1" min="1" style="width:5em">
+quantity <input id="qty" type="number" value="1" min="1" max="1000" style="width:5em">
+<button id="order">Place order</button> <button id="loadorders">Recent orders</button>
+<div id="orderout"></div></fieldset>
+
+<fieldset><legend>2. Refresh analytics snapshot</legend>
+<button id="refresh">Refresh now</button> <button id="status">Status</button>
+<div id="statusout"></div></fieldset>
+
+<fieldset><legend>3. Analytical report (from DuckDB snapshot)</legend>
+<select id="report"></select> limit <input id="limit" type="number" value="10" min="1" max="100" style="width:5em">
+<button id="run">Run</button><div id="reportout"></div></fieldset>
+<script>
+const $=id=>document.getElementById(id);
+$('key').value=sessionStorage.getItem('sbkey')||'';
+$('savekey').onclick=()=>{sessionStorage.setItem('sbkey',$('key').value);loadReports();};
+async function api(path,opts={}){
+  const r=await fetch(path,{...opts,headers:{'X-API-Key':$('key').value,'Content-Type':'application/json'}});
+  const body=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||r.status));
+  return body;
+}
+function table(rows){
+  const t=document.createElement('table');if(!rows.length){t.textContent='(no rows)';return t;}
+  const cols=Object.keys(rows[0]);const h=t.insertRow();
+  cols.forEach(c=>{const th=document.createElement('th');th.textContent=c;h.appendChild(th);});
+  rows.forEach(r=>{const tr=t.insertRow();cols.forEach(c=>{tr.insertCell().textContent=r[c]===null?'':r[c];});});
+  return t;
+}
+function show(id,node,isErr){const o=$(id);o.replaceChildren();
+  if(typeof node==='string'){const p=document.createElement('p');p.textContent=node;p.className=isErr?'err':'ok';o.appendChild(p);}else o.appendChild(node);}
+const guard=(id,fn)=>async()=>{try{await fn();}catch(e){show(id,'Error: '+e.message,true);}};
+$('order').onclick=guard('orderout',async()=>{
+  const o=await api('/api/orders',{method:'POST',body:JSON.stringify({customer_id:+$('cid').value,product_id:+$('pid').value,quantity:+$('qty').value})});
+  show('orderout',table([o]));});
+$('loadorders').onclick=guard('orderout',async()=>show('orderout',table(await api('/api/orders?limit=10'))));
+function renderStatus(s){const l=s.last_run;
+  show('statusout',l?`Last run #${l.run_id}: ${l.status}${l.error?' — '+l.error:''} (finished ${l.finished_at}); last success: ${s.last_success_at||'never'}; mode: ${s.mode}`:'No refresh yet. Mode: '+s.mode,!!(l&&l.status==='failed'));}
+$('refresh').onclick=guard('statusout',async()=>renderStatus(await api('/api/analytics/refresh',{method:'POST'})));
+$('status').onclick=guard('statusout',async()=>renderStatus(await api('/api/analytics/status')));
+$('run').onclick=guard('reportout',async()=>show('reportout',table(await api(`/api/analytics/reports/${encodeURIComponent($('report').value)}?limit=${+$('limit').value}`))));
+async function loadReports(){try{const names=await api('/api/analytics/reports');$('report').replaceChildren(...names.map(n=>{const o=document.createElement('option');o.value=o.textContent=n;return o;}));}catch(e){}}
+loadReports();
+</script></body></html>
