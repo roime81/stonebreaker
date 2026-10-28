@@ -46,6 +46,9 @@ Tests use a real PostgreSQL: set `STONEBREAKER_TEST_PG_DSN` (a superuser DSN, e.
 
 Run without Docker: `cd backend && STONEBREAKER_API_KEY=... STONEBREAKER_PG_DSN=... uvicorn app.server:app`.
 
+## Testing and benchmarks
+See [docs/TESTING_AND_BENCHMARKS.md](docs/TESTING_AND_BENCHMARKS.md) for security, concurrency, stress and scale tests, measured results and honest limits (1B rows not yet run).
+
 ## Architecture
 ```
 console / clients --HTTP--> FastAPI --psycopg (parameterised SQL)--> PostgreSQL (truth)
@@ -53,7 +56,7 @@ console / clients --HTTP--> FastAPI --psycopg (parameterised SQL)--> PostgreSQL 
                               \-- /graphql (Strawberry), same service layer
 ```
 - Writes: `place_order` runs in one PostgreSQL transaction (row lock on product, stock check, decrement, insert).
-- Sync: a full snapshot refresh. Tables are read from PostgreSQL in one `REPEATABLE READ READ ONLY` transaction (consistent point in time across tables), then DuckDB tables are emptied and refilled inside one DuckDB transaction. It is all-or-nothing and idempotent (primary keys, replace not append). Only one refresh runs at a time (concurrent call: 409). Every run is recorded in `sync_runs`.
+- Sync: a full snapshot refresh. Tables are read from PostgreSQL in one `REPEATABLE READ READ ONLY` transaction (consistent point in time across tables), streamed to temporary CSV files with `COPY`, then DuckDB tables are emptied and refilled inside one DuckDB transaction. It is all-or-nothing and idempotent (primary keys, replace not append). Only one refresh runs at a time (concurrent call: 409). Every run is recorded in `sync_runs`.
 
 ## Security (development assumptions)
 - No endpoint accepts SQL. Analytics are a fixed catalogue of reports with bounded `limit` (max 100); all values are bound parameters.
@@ -63,7 +66,7 @@ console / clients --HTTP--> FastAPI --psycopg (parameterised SQL)--> PostgreSQL 
 
 ## Consistency and limitations
 - Analytics are **eventually consistent snapshots**, as fresh as the last successful refresh (manual trigger; no scheduler). Not real-time, no CDC/WAL.
-- Refresh copies whole tables into memory: fine for the sample, not for large data.
+- Refresh copies whole tables (streamed through temp files on disk, not memory); 2M orders take ~3 s in the sandbox, but cost grows with total data size.
 - DuckDB is single-process, accessed through one guarded connection.
 - Not implemented: MySQL protocol/dialect compatibility, graph traversal, AI acceleration, automatic query routing, CDC, user management, migrations, observability, production hardening.
 

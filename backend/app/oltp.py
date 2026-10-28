@@ -67,6 +67,8 @@ def place_order(dsn: str, customer_id: int, product_id: int, quantity: int) -> d
     """Atomically check stock, decrement it and insert the order."""
     if quantity <= 0 or quantity > 1000:
         raise OrderError("quantity must be between 1 and 1000")
+    if not (0 < customer_id <= 2147483647 and 0 < product_id <= 2147483647):
+        raise OrderError("customer_id/product_id out of range")
     with connect(dsn) as conn:  # context manager commits on success, rolls back on error
         if conn.execute("SELECT 1 FROM customers WHERE id = %s", (customer_id,)).fetchone() is None:
             raise OrderError("customer not found", 404)

@@ -1,10 +1,12 @@
 import hmac
+from typing import Annotated
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import psycopg
 import strawberry
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Path as PathParam
 from fastapi import Query as QueryParam
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -18,8 +20,8 @@ STATIC = Path(__file__).parent / "static"
 
 
 class OrderIn(BaseModel):
-    customer_id: int = Field(gt=0)
-    product_id: int = Field(gt=0)
+    customer_id: int = Field(gt=0, le=2147483647)
+    product_id: int = Field(gt=0, le=2147483647)
     quantity: int = Field(gt=0, le=1000)
 
 
@@ -69,7 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return oltp.place_order(settings.pg_dsn, body.customer_id, body.product_id, body.quantity)
 
     @app.get("/api/orders/{order_id}", dependencies=auth)
-    def order(order_id: int):
+    def order(order_id: Annotated[int, PathParam(gt=0, le=2147483647)]):
         row = oltp.get_order(settings.pg_dsn, order_id)
         if row is None:
             raise HTTPException(404, "order not found")

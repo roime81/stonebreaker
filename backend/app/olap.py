@@ -3,6 +3,8 @@
 There is deliberately no endpoint that accepts SQL; clients choose a named report and
 bounded parameters.
 """
+import os
+import tempfile
 import threading
 from datetime import datetime, timezone
 
@@ -19,12 +21,18 @@ _TABLES = {
 _DDL = """
 CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name VARCHAR, region VARCHAR);
 CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name VARCHAR, category VARCHAR, price_cents INTEGER, stock INTEGER);
-CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, customer_id INTEGER, product_id INTEGER,
+CREATE TABLE IF NOT EXISTS orders (id BIGINT PRIMARY KEY, customer_id INTEGER, product_id INTEGER,
     quantity INTEGER, total_cents BIGINT, created_at TIMESTAMP);
 CREATE SEQUENCE IF NOT EXISTS sync_run_seq;
 CREATE TABLE IF NOT EXISTS sync_runs (run_id BIGINT, started_at TIMESTAMP, finished_at TIMESTAMP, status VARCHAR,
     error VARCHAR, rows_customers BIGINT, rows_products BIGINT, rows_orders BIGINT);
 """
+
+_CSV_TYPES = {
+    "customers": "{'id':'INTEGER','name':'VARCHAR','region':'VARCHAR'}",
+    "products": "{'id':'INTEGER','name':'VARCHAR','category':'VARCHAR','price_cents':'INTEGER','stock':'INTEGER'}",
+    "orders": "{'id':'BIGINT','customer_id':'INTEGER','product_id':'INTEGER','quantity':'INTEGER','total_cents':'BIGINT','created_at':'TIMESTAMP'}",
+}
 
 REPORTS = {
     "revenue_by_category": (
@@ -90,31 +98,36 @@ class Analytics:
         try:
             counts: dict[str, int] = {}
             try:
-                data: dict[str, list[tuple]] = {}
-                with oltp.connect(self._pg_dsn, timeout_ms=60000) as pg:
-                    pg.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-                    for table, cols in _TABLES.items():
-                        rows = pg.execute(f"SELECT {', '.join(cols)} FROM {table} ORDER BY id").fetchall()  # fixed identifiers
-                        data[table] = [_row(table, r, cols) for r in rows]
-                with self._db_lock:
-                    con = self._con.cursor()
-                    try:
-                        con.execute("BEGIN")
+                with tempfile.TemporaryDirectory(prefix="sb_refresh_") as tmp:
+                    files: dict[str, str] = {}
+                    with oltp.connect(self._pg_dsn, timeout_ms=0) as pg:
+                        pg.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                        for table, cols in _TABLES.items():
+                            sel = ", ".join(f"{c} AT TIME ZONE 'UTC'" if c == "created_at" else c for c in cols)
+                            path = os.path.join(tmp, f"{table}.csv")
+                            with open(path, "wb") as f, pg.cursor().copy(
+                                f"COPY (SELECT {sel} FROM {table} ORDER BY id) TO STDOUT WITH (FORMAT csv)"  # fixed identifiers
+                            ) as cp:
+                                for chunk in cp:
+                                    f.write(chunk)
+                            files[table] = path
+                    with self._db_lock:
+                        con = self._con.cursor()
                         try:
-                            for table in ("orders", "products", "customers"):
-                                con.execute(f"DELETE FROM {table}")
-                            for table in ("customers", "products", "orders"):
-                                ph = ", ".join("?" * len(_TABLES[table]))
-                                if data[table]:
-                                    con.executemany(f"INSERT INTO {table} VALUES ({ph})", data[table])
-                                counts[table] = len(data[table])
-                            self._record(con, started, "success", None, counts)
-                            con.execute("COMMIT")
-                        except Exception:
-                            con.execute("ROLLBACK")
-                            raise
-                    finally:
-                        con.close()
+                            con.execute("BEGIN")
+                            try:
+                                for table in ("orders", "products", "customers"):
+                                    con.execute(f"DELETE FROM {table}")
+                                for table in ("customers", "products", "orders"):
+                                    con.execute(f"INSERT INTO {table} SELECT * FROM read_csv(?, header=false, columns={_CSV_TYPES[table]})", [files[table]])
+                                    counts[table] = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                                self._record(con, started, "success", None, counts)
+                                con.execute("COMMIT")
+                            except Exception:
+                                con.execute("ROLLBACK")
+                                raise
+                        finally:
+                            con.close()
             except Exception as exc:
                 msg = f"{type(exc).__name__}: {exc}"[:500]
                 with self._db_lock:
@@ -157,9 +170,3 @@ class Analytics:
             raise ValueError(f"limit must be between 1 and {self.max_rows}")
         return self._query(REPORTS[name][0], [n])
 
-
-def _row(table, r, cols):
-    vals = [r[c] for c in cols]
-    if table == "orders":
-        vals[-1] = vals[-1].astimezone(timezone.utc).replace(tzinfo=None)
-    return tuple(vals)
