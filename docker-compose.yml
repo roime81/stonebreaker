@@ -1,0 +1,26 @@
+# Development only. Ports are bound to localhost; PostgreSQL is not published to the host.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: stonebreaker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env}
+      POSTGRES_DB: stonebreaker
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stonebreaker"]
+      interval: 3s
+      retries: 20
+  backend:
+    build: ./backend
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      STONEBREAKER_API_KEY: ${STONEBREAKER_API_KEY:?copy .env.example to .env}
+      STONEBREAKER_PG_DSN: postgresql://stonebreaker:${POSTGRES_PASSWORD}@postgres:5432/stonebreaker
+      STONEBREAKER_SEED: "true"
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: [duckdata:/data]
+volumes:
+  pgdata:
+  duckdata:
